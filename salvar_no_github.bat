@@ -28,6 +28,14 @@ if not defined GIT_CMD (
 
 echo Usando Git em: %GIT_CMD%
 
+"%GIT_CMD%" fetch origin
+"%GIT_CMD%" branch --set-upstream-to=origin/main main >nul 2>&1
+"%GIT_CMD%" pull --rebase origin main
+if errorlevel 1 (
+  echo Tentando resolver historicos nao relacionados...
+  "%GIT_CMD%" pull --rebase --allow-unrelated-histories origin main
+)
+
 "%GIT_CMD%" add .
 "%GIT_CMD%" commit -m "Atualizacao automatica"
 "%GIT_CMD%" push -u origin main
