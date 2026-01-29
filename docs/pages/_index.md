@@ -1,0 +1,34 @@
+# Índice de Páginas
+- PaginaVendas — `src\templates\pagina vendas\src\pages\Index.tsx` — rota: `/`
+- Auth — `src\pages\Auth.tsx` — rota: `/auth`
+- Onboarding — `src\pages\Onboarding.tsx` — rota: `/onboarding`
+- PaginaVendas — `src\templates\pagina vendas\src\pages\Index.tsx` — rota: `/vendas`
+- Dashboard — `src\pages\Dashboard.tsx` — rota: `/dashboard`
+- Membros — `src\pages\Membros.tsx` — rota: `/membros`
+- div — `inline` — rota: `/planos`
+- Celulas — `src\pages\Celulas.tsx` — rota: `/celulas`
+- Aniversariantes — `src\pages\Aniversariantes.tsx` — rota: `/aniversariantes`
+- Visitantes — `src\pages\Visitantes.tsx` — rota: `/visitantes`
+- Ministerios — `src\pages\Ministerios.tsx` — rota: `/ministerios`
+- Eventos — `src\pages\Eventos.tsx` — rota: `/eventos`
+- Liturgia — `src\pages\Liturgia.tsx` — rota: `/culto-e-programacao`
+- Navigate — `inline` — rota: `/liturgia`
+- Checkin — `src\pages\Checkin.tsx` — rota: `/checkin`
+- Relatorios — `src\pages\Relatorios.tsx` — rota: `/relatorios`
+- div — `inline` — rota: `/financeiro`
+- Oracoes — `src\pages\Oracoes.tsx` — rota: `/oracoes`
+- DicasLeitura — `src\pages\DicasLeitura.tsx` — rota: `/dicas-leitura`
+- Midias — `src\pages\Midias.tsx` — rota: `/midia`
+- SiteBuilder — `src\pages\SiteBuilder.tsx` — rota: `/site-builder`
+- PublicModeloSite — `src\pages\PublicModeloSite.tsx` — rota: `/site-modelo`
+- PublicModeloSite — `src\pages\PublicModeloSite.tsx` — rota: `/modelo-site/*`
+- ModeloEditavel — `src\pages\ModeloEditavel.tsx` — rota: `/site-modelo-editavel`
+- Configuracoes — `src\pages\Configuracoes.tsx` — rota: `/configuracoes`
+- MeuPerfil — `src\pages\MeuPerfil.tsx` — rota: `/perfil`
+- UsuariosPermissoes — `src\pages\UsuariosPermissoes.tsx` — rota: `/usuarios-permissoes`
+- Suspense — `inline` — rota: `/midia-share/:share_id`
+- PublicCheckin — `src\pages\PublicCheckin.tsx` — rota: `/checkin/:event_id`
+- Forbidden — `src\pages\Forbidden.tsx` — rota: `/403`
+- NotFound — `src\pages\NotFound.tsx` — rota: `*`
+- MidiaShare — `src/pages/MidiaShare.tsx` — rota: (não mapeada em App.tsx)
+- Vendas — `src/pages/Vendas.tsx` — rota: (não mapeada em App.tsx)
