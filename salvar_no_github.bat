@@ -34,6 +34,6 @@ echo Usando Git em: %GIT_CMD%
 
 echo.
 echo Concluido. Se aparecer "repository not found", crie o repo em:
-echo   https://github.com/designeratrioz-del/appcrmigreja
+echo   https://github.com/JosimarRiskoski/appcrmigreja
 echo ou verifique seu acesso/permissoes.
 pause

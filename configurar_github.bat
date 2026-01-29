@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-set URL=https://github.com/designeratrioz-del/appcrmigreja.git
+set URL=https://github.com/JosimarRiskoski/appcrmigreja.git
 
 echo ==========================================
 echo CONFIGURANDO GITHUB (origin: %URL%)
