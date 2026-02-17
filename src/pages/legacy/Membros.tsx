@@ -15,6 +15,7 @@ import { AddMemberModal } from "@/components/members/AddMemberModal";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useChurchId } from "@/hooks/useChurchId";
+import { useMembers } from "@/hooks/useMembers";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { format } from "date-fns";
@@ -26,41 +27,19 @@ export default function Membros() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const cellIdFilter = searchParams.get('cell_id');
-  
-  const queryClient = useQueryClient();
+
+
+  const { members, loading: membersLoading, deleteMember, refreshMembers } = useMembers(cellIdFilter || undefined);
   const { data: churchId, isLoading: churchLoading } = useChurchId();
-  const membersQuery = useQuery<Member[]>({
-    queryKey: ["members", churchId, cellIdFilter],
-    enabled: !!churchId,
-    queryFn: async () => {
-      let query = supabase
-        .from('members')
-        .select(`
-          *,
-          cell:cells!members_cell_id_fkey(
-            id,
-            name,
-            leader_id,
-            meeting_day,
-            meeting_time,
-            meeting_location
-          )
-        `)
-        .eq('church_id', churchId as string)
-        .neq('status', 'visitante');
 
-      if (cellIdFilter) {
-        query = query.eq('cell_id', cellIdFilter);
-      }
-
-      const { data, error } = await query.order('full_name');
-      if (error) throw error;
-      return (data || []) as Member[];
-    },
-  });
+  // Compatibilidade com código legado abaixo
+  const membersQuery = {
+    data: members,
+    isLoading: membersLoading
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<'all' | 'ativo' | 'inativo'>('all');
-  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'name'>('newest');
   const [selectedLayout, setSelectedLayout] = useState<LayoutType>(() => {
     const saved = localStorage.getItem(LAYOUT_STORAGE_KEY);
     return (saved as LayoutType) || 'medium';
@@ -93,7 +72,7 @@ export default function Membros() {
     }
   }, [cellNameQuery.data?.name]);
 
-  
+
 
   const handleLayoutChange = (layout: LayoutType) => {
     setSelectedLayout(layout);
@@ -108,21 +87,10 @@ export default function Membros() {
   const handleConfirmDelete = async () => {
     if (!memberToDelete) return;
 
-    try {
-      const { error } = await supabase
-        .from('members')
-        .delete()
-        .eq('id', memberToDelete.id);
-
-      if (error) throw error;
-
-      toast.success(`${memberToDelete.full_name} foi removido`);
-      queryClient.invalidateQueries({ queryKey: ["members", churchId] });
+    const success = await deleteMember(memberToDelete.id);
+    if (success) {
       setShowDeleteModal(false);
       setMemberToDelete(null);
-    } catch (error) {
-      console.error('Erro ao excluir membro:', error);
-      toast.error('Erro ao excluir membro');
     }
   };
 
@@ -142,13 +110,13 @@ export default function Membros() {
   };
 
   const handleModalSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: ["members", churchId] });
+    refreshMembers();
     setShowAddModal(false);
     setMemberToEdit(null);
   };
 
   const filteredMembers = (membersQuery.data || []).filter(member => {
-    const matchesSearch = !searchQuery || 
+    const matchesSearch = !searchQuery ||
       member.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       member.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       member.phone?.includes(searchQuery);
@@ -268,6 +236,7 @@ export default function Membros() {
               <SelectContent>
                 <SelectItem value="newest">Mais novos</SelectItem>
                 <SelectItem value="oldest">Mais velhos</SelectItem>
+                <SelectItem value="name">A-Z</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -275,7 +244,7 @@ export default function Membros() {
       </div>
 
       {filteredMembers.length === 0 ? (
-        <EmptyState 
+        <EmptyState
           searchQuery={searchQuery}
           onAddMember={handleAddMember}
         />

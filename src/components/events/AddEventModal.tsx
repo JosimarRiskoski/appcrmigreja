@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
-import { format, startOfDay, endOfDay } from "date-fns";
+import { format } from "date-fns";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
   DialogContent,
@@ -35,44 +33,11 @@ import { cn } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-
-const eventSchema = z.object({
-  title: z.string().min(3, "Título deve ter pelo menos 3 caracteres"),
-  date: z.date({ required_error: "Selecione a data do início" }),
-  time: z.string().min(5, "Informe o horário de início no formato HH:mm"),
-  endDate: z.date({ required_error: "Selecione a data de fim do evento" }),
-  endTime: z.string().min(5, "Informe o horário de fim no formato HH:mm"),
-  location: z.string().optional(),
-  description: z.string().optional(),
-  featured: z.boolean().optional(),
-}).refine((data) => {
-  const s = new Date(data.date);
-  const [sh, sm] = data.time.split(":").map(Number);
-  s.setHours(sh, sm, 0, 0);
-  const e = new Date(data.endDate);
-  const [eh, em] = data.endTime.split(":").map(Number);
-  e.setHours(eh, em, 0, 0);
-  return e.getTime() >= s.getTime();
-}, { message: "Fim do evento deve ser após o início", path: ["endTime"] });
-
-type EventFormData = z.infer<typeof eventSchema>;
+import { eventSchema, EventFormData } from "@/schemas/eventSchema";
+import { useEvents, DbEvent } from "@/hooks/useEvents";
 
 const FEATURED_MARK = "[FEATURED]";
-const withFeatured = (desc: string | null, featured: boolean) => {
-  const base = desc || "";
-  const cleaned = base.replace(FEATURED_MARK, "").trim();
-  return featured ? `${FEATURED_MARK} ${cleaned}`.trim() : (cleaned || null);
-};
 const parseFeatured = (desc: string | null) => !!(desc || "").includes(FEATURED_MARK);
-
-interface DbEvent {
-  id: string;
-  title: string;
-  event_date: string;
-  end_date: string | null;
-  location: string | null;
-  description: string | null;
-}
 
 interface AddEventModalProps {
   open: boolean;
@@ -82,7 +47,7 @@ interface AddEventModalProps {
 }
 
 export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEventModalProps) {
-  const [loading, setLoading] = useState(false);
+  const { createEvent, updateEvent, checkConflicts, loading } = useEvents();
   const [dateOpen, setDateOpen] = useState(false);
   const [endDateOpen, setEndDateOpen] = useState(false);
   const [confirmSameDayOpen, setConfirmSameDayOpen] = useState(false);
@@ -134,103 +99,35 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
     }
   }, [open, event, form]);
 
-  const combineDateTime = (date: Date, time: string) => {
-    const [h, m] = time.split(":").map(Number);
-    const dt = new Date(date);
-    dt.setHours(h, m, 0, 0);
-    return dt;
+  const onSubmit = async (data: EventFormData) => {
+    // Conflict check logic
+    const { conflict, count } = await checkConflicts(data.date, event?.id);
+
+    if (conflict && !event) {
+      // Just warning if create new event
+      setSameDayCount(count);
+      setPendingFormData(data);
+      setConfirmSameDayOpen(true);
+      return;
+    }
+
+    // Direct submit if update, or no conflict
+    await handleFinalSubmit(data);
   };
 
-  const onSubmit = async (data: EventFormData) => {
-    setLoading(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Usuário não autenticado");
+  const handleFinalSubmit = async (data: EventFormData) => {
+    let success = false;
+    if (event) {
+      success = await updateEvent(event.id, data);
+    } else {
+      success = await createEvent(data);
+    }
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("church_id")
-        .eq("id", user.id)
-        .single();
-
-      if (!profile?.church_id) throw new Error("Igreja não encontrada");
-
-      const start = combineDateTime(data.date, data.time);
-      const end = combineDateTime(data.endDate, data.endTime);
-
-      const { data: existingExact } = await supabase
-        .from("events")
-        .select("id")
-        .eq("church_id", profile.church_id)
-        .eq("title", data.title)
-        .eq("event_date", start.toISOString())
-        .limit(1);
-
-      if ((existingExact || []).length > 0) {
-        if (!event || (event && (existingExact || [])[0].id !== event.id)) {
-          throw new Error("Já existe um evento com o mesmo título e horário");
-        }
-      }
-
-      const dayStart = startOfDay(start).toISOString();
-      const dayEnd = endOfDay(start).toISOString();
-      let sameDayQuery = supabase
-        .from("events")
-        .select("id")
-        .eq("church_id", profile.church_id)
-        .gte("event_date", dayStart)
-        .lt("event_date", dayEnd);
-      if (event?.id) {
-        sameDayQuery = sameDayQuery.neq("id", event.id);
-      }
-      const { data: sameDay } = await sameDayQuery;
-      if ((sameDay || []).length > 0 && !event) {
-        setSameDayCount((sameDay || []).length);
-        setPendingFormData(data);
-        setConfirmSameDayOpen(true);
-        setLoading(false);
-        return;
-      }
-
-      const eventData = {
-        church_id: profile.church_id,
-        title: data.title,
-        event_date: start.toISOString(),
-        end_date: end.toISOString(),
-        location: data.location ? data.location : null,
-        description: withFeatured(data.description ? data.description : null, !!data.featured),
-        created_by: user.id,
-      };
-
-      if (event) {
-        const { error } = await supabase
-          .from("events")
-          .update({
-            church_id: eventData.church_id,
-            title: eventData.title,
-            event_date: eventData.event_date,
-            end_date: eventData.end_date,
-            location: eventData.location,
-            description: eventData.description,
-          })
-          .eq("id", event.id);
-        if (error) throw error;
-        toast.success("Evento atualizado com sucesso!");
-      } else {
-        const { error } = await supabase
-          .from("events")
-          .insert(eventData);
-        if (error) throw error;
-        toast.success("Evento criado com sucesso!");
-      }
-
+    if (success) {
+      setConfirmSameDayOpen(false);
+      setPendingFormData(null);
       onSuccess();
       onOpenChange(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Erro ao salvar evento";
-      toast.error(message);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -253,6 +150,7 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
                 </AlertDescription>
               </Alert>
             )}
+
             <FormField
               control={form.control}
               name="title"
@@ -262,10 +160,10 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
                   <FormControl>
                     <Input placeholder="Nome do Evento" {...field} />
                   </FormControl>
-        <FormMessage />
-      </FormItem>
-    )}
-  />
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}
@@ -291,35 +189,35 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
                 render={({ field }) => (
                   <FormItem className="flex flex-col">
                     <FormLabel>Início *</FormLabel>
-                      <Popover open={dateOpen} onOpenChange={setDateOpen}>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant="outline"
-                              className={cn(
-                                "w-full pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? format(field.value, "dd/MM/yyyy") : <div>Selecione a data de início</div>}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            initialFocus
-                            className="pointer-events-auto"
-                            onConfirm={(date) => {
-                              field.onChange(date);
-                              setDateOpen(false);
-                            }}
-                          />
-                        </PopoverContent>
-                      </Popover>
+                    <Popover open={dateOpen} onOpenChange={setDateOpen}>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                          >
+                            {field.value ? format(field.value, "dd/MM/yyyy") : <div>Selecione a data de início</div>}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          initialFocus
+                          className="pointer-events-auto"
+                          onConfirm={(date) => {
+                            field.onChange(date);
+                            setDateOpen(false);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -331,35 +229,35 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
                 render={({ field }) => (
                   <FormItem className="flex flex-col">
                     <FormLabel>Fim *</FormLabel>
-                      <Popover open={endDateOpen} onOpenChange={setEndDateOpen}>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant="outline"
-                              className={cn(
-                                "w-full pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? format(field.value, "dd/MM/yyyy") : <div>Selecione a data de fim</div>}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            initialFocus
-                            className="pointer-events-auto"
-                            onConfirm={(date) => {
-                              field.onChange(date);
-                              setEndDateOpen(false);
-                            }}
-                          />
-                        </PopoverContent>
-                      </Popover>
+                    <Popover open={endDateOpen} onOpenChange={setEndDateOpen}>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                          >
+                            {field.value ? format(field.value, "dd/MM/yyyy") : <div>Selecione a data de fim</div>}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value}
+                          onSelect={field.onChange}
+                          initialFocus
+                          className="pointer-events-auto"
+                          onConfirm={(date) => {
+                            field.onChange(date);
+                            setEndDateOpen(false);
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -408,36 +306,19 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
               )}
             />
 
-          <FormField
-            control={form.control}
-            name="description"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Descrição</FormLabel>
-                <FormControl>
-                  <Textarea placeholder="Detalhes do evento, agenda, observações..." {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="featured"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Destacar no site</FormLabel>
-                <FormControl>
-                  <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={!!field.value} onCheckedChange={(v) => field.onChange(Boolean(v))} />
-                    Destacar
-                  </label>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Descrição</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Detalhes do evento, agenda, observações..." {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <AlertDialog open={confirmSameDayOpen} onOpenChange={setConfirmSameDayOpen}>
               <AlertDialogContent>
@@ -451,41 +332,7 @@ export function AddEventModal({ open, onOpenChange, event, onSuccess }: AddEvent
                   <AlertDialogCancel onClick={() => { setConfirmSameDayOpen(false); setPendingFormData(null); }}>Não</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={async () => {
-                      if (!pendingFormData) return;
-                      setLoading(true);
-                      try {
-                        const { data: { user } } = await supabase.auth.getUser();
-                        if (!user) throw new Error("Usuário não autenticado");
-                        const { data: profile } = await supabase
-                          .from("profiles")
-                          .select("church_id")
-                          .eq("id", user.id)
-                          .single();
-                        if (!profile?.church_id) throw new Error("Igreja não encontrada");
-                        const start = combineDateTime(pendingFormData.date, pendingFormData.time);
-                        const end = combineDateTime(pendingFormData.endDate, pendingFormData.endTime);
-                        const eventData = {
-                          church_id: profile.church_id,
-                          title: pendingFormData.title,
-                          event_date: start.toISOString(),
-                          end_date: end.toISOString(),
-                          location: pendingFormData.location ? pendingFormData.location : null,
-                          description: withFeatured(pendingFormData.description ? pendingFormData.description : null, !!pendingFormData.featured),
-                          created_by: user.id,
-                        };
-                        const { error } = await supabase.from("events").insert(eventData);
-                        if (error) throw error;
-                        toast.success("Evento criado com sucesso!");
-                        setConfirmSameDayOpen(false);
-                        setPendingFormData(null);
-                        onSuccess();
-                        onOpenChange(false);
-                      } catch (e) {
-                        const message = e instanceof Error ? e.message : "Erro ao salvar evento";
-                        toast.error(message);
-                      } finally {
-                        setLoading(false);
-                      }
+                      if (pendingFormData) await handleFinalSubmit(pendingFormData);
                     }}
                   >
                     Sim, adicionar

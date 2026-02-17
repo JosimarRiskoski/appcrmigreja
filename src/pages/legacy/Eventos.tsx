@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { AddEventModal } from "@/components/events/AddEventModal";
 import { format } from "date-fns";
+import { useEvents, DbEvent } from "@/hooks/useEvents";
 import { ptBR } from "date-fns/locale";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useChurchId } from "@/hooks/useChurchId";
@@ -25,7 +26,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
- 
+
 
 const computeStatus = (d: Date): 'today' | 'upcoming' | 'week' | 'future' | 'past' => {
   const now = new Date();
@@ -50,33 +51,54 @@ export default function Eventos() {
   });
   const queryClient = useQueryClient();
   const { data: churchId, isLoading: churchLoading } = useChurchId();
-  const rawEventsQuery = useQuery<Array<{ id: string; title: string; event_date: string; end_date: string | null; location: string | null; description: string | null }>>({
-    queryKey: ["events", churchId],
-    enabled: !!churchId,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('events')
-        .select('id, title, event_date, end_date, location, description')
-        .eq('church_id', churchId as string)
-        .order('event_date', { ascending: true });
-      return (data || []) as Array<{ id: string; title: string; event_date: string; end_date: string | null; location: string | null; description: string | null }>;
-    },
-  });
+  /* 
+   * Integrating useEvents Hook
+   * This replaces rawEventsQuery and attendanceQuery
+   */
+  const {
+    events: eventsData,
+    loading: eventsLoading,
+    deleteEvent,
+    attendanceCounts,
+    refreshEvents
+  } = useEvents();
+
+  // State variables needed for UI
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+
+  // Modal states
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [eventToEdit, setEventToEdit] = useState<{ id: string; title: string; event_date: string; end_date: string | null; location: string | null; description: string | null } | null>(null);
+
+  // Edit & Details states
+  // We use the shape from DbEvent but match what the UI expects or cast if needed.
+  // The existing code expects a certain shape for eventToEdit, let's allow DbEvent or null.
+  const [eventToEdit, setEventToEdit] = useState<DbEvent | null>(null);
+
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [selectedEventRaw, setSelectedEventRaw] = useState<{ id: string; title: string; event_date: string; end_date: string | null; location: string | null; description: string | null } | null>(null);
+  const [selectedEventRaw, setSelectedEventRaw] = useState<DbEvent | null>(null);
 
-  useEffect(() => {
-    localStorage.setItem('graceHubLayoutPreference', selectedLayout);
-  }, [selectedLayout]);
+  // Mapping compatibility for existing code patterns if needed, 
+  // or refactoring downstream usage.
+  // rawEventsQuery was: { data: [...] }
+  const rawEventsQuery = {
+    data: eventsData,
+    isLoading: eventsLoading
+  };
 
-  
+  // attendanceQuery was: { data: Record<string, number> }
+  const attendanceQuery = {
+    data: attendanceCounts
+  };
+
+  const handleEdit = (id: string) => {
+    const raw = (rawEventsQuery.data || []).find(e => e.id === id) || null;
+    setSelectedEventRaw(raw);
+    setDetailsOpen(true);
+  };
 
   const events: Event[] = useMemo(() => {
     const raw = rawEventsQuery.data || [];
@@ -88,41 +110,18 @@ export default function Eventos() {
         date: format(d, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }),
         time: format(d, "HH:mm"),
         location: ev.location || '',
-        attendees: 0,
+        attendees: attendanceQuery.data[ev.id] || 0,
         status: computeStatus(d),
         description: ev.description || undefined,
       } as Event;
     });
-  }, [rawEventsQuery.data]);
-
-  const attendanceQuery = useQuery<Record<string, number>>({
-    queryKey: ["eventAttendanceCounts", churchId, (rawEventsQuery.data || []).map(e => e.id)],
-    enabled: !!churchId && !!rawEventsQuery.data && rawEventsQuery.data.length > 0,
-    queryFn: async () => {
-      const ids = (rawEventsQuery.data || []).map(e => e.id);
-      const { data: att } = await supabase
-        .from('event_attendance')
-        .select('event_id')
-        .in('event_id', ids);
-      const map: Record<string, number> = {};
-      (att || []).forEach(a => {
-        map[a.event_id] = (map[a.event_id] || 0) + 1;
-      });
-      return map;
-    },
-  });
-
-  const handleEdit = (id: string) => {
-    const raw = (rawEventsQuery.data || []).find(e => e.id === id) || null;
-    setSelectedEventRaw(raw);
-    setDetailsOpen(true);
-  };
+  }, [rawEventsQuery.data, attendanceQuery.data]);
 
   // Filtrar eventos
   const filteredEvents = useMemo(() => {
     return events.filter(event => {
       // Filtro de busca
-      const matchesSearch = searchQuery === '' || 
+      const matchesSearch = searchQuery === '' ||
         event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         event.location.toLowerCase().includes(searchQuery.toLowerCase());
 
@@ -154,21 +153,13 @@ export default function Eventos() {
 
   const handleConfirmDelete = async () => {
     if (!eventToDelete) return;
-    try {
-      await supabase
-        .from('events')
-        .delete()
-        .eq('id', eventToDelete.id);
-      queryClient.invalidateQueries({ queryKey: ["events", churchId] });
+
+    // Use hook logic
+    const success = await deleteEvent(eventToDelete.id);
+
+    if (success) {
       setShowDeleteModal(false);
-      toast({
-        title: "Evento excluído",
-        description: `"${eventToDelete.title}" foi excluído com sucesso`,
-        className: "bg-card border-border",
-      });
       setEventToDelete(null);
-    } catch (error) {
-      toast({ title: "Erro ao excluir evento" });
     }
   };
 
@@ -246,7 +237,7 @@ export default function Eventos() {
           >
             Esta Semana
           </Button>
-          
+
 
           {/* Seletor de Layout */}
           <LayoutSelector
@@ -307,7 +298,7 @@ export default function Eventos() {
         onOpenChange={setShowAddModal}
         event={eventToEdit}
         onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ["events", churchId] });
+          refreshEvents();
           setShowAddModal(false);
           setEventToEdit(null);
         }}
@@ -318,7 +309,7 @@ export default function Eventos() {
         onOpenChange={setDetailsOpen}
         event={selectedEventRaw}
         onSaved={() => {
-          queryClient.invalidateQueries({ queryKey: ["events", churchId] });
+          refreshEvents();
           setDetailsOpen(false);
           setSelectedEventRaw(null);
         }}
@@ -393,9 +384,9 @@ function EventDetailsSheet({ open, onOpenChange, event, onSaved }: { open: boole
                   <FormItem>
                     <FormLabel>Título</FormLabel>
                     <FormControl><Input {...field} /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )} />
+                    <FormMessage />
+                  </FormItem>
+                )} />
 
                 <FormField control={form.control} name="featured" render={({ field }) => (
                   <FormItem>

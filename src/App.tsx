@@ -6,19 +6,19 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Auth from "./pages/Auth";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
-import Membros from "./pages/Membros";
-import Celulas from "./pages/Celulas";
+import Membros from "./pages/legacy/Membros";
+import Celulas from "./pages/legacy/Celulas";
 import Aniversariantes from "./pages/Aniversariantes";
-import Eventos from "./pages/Eventos";
-import Liturgia from "./pages/Liturgia";
-import Visitantes from "./pages/Visitantes";
-import Ministerios from "./pages/Ministerios";
-import Oracoes from "./pages/Oracoes";
-import DicasLeitura from "./pages/DicasLeitura";
+import Eventos from "./pages/legacy/Eventos";
+import Liturgia from "./pages/legacy/Liturgia";
+import Visitantes from "./pages/legacy/Visitantes";
+import Ministerios from "./pages/legacy/Ministerios";
+import Oracoes from "./pages/legacy/Oracoes";
+import DicasLeitura from "./pages/legacy/DicasLeitura";
 import NotFound from "./pages/NotFound";
 import Configuracoes from "./pages/Configuracoes";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
-import Midias from "./pages/Midias";
+import Midias from "./pages/legacy/Midias";
 import PublicModeloSite from "./pages/PublicModeloSite";
 import ModeloEditavel from "./pages/ModeloEditavel";
 import SiteBuilder from "./pages/SiteBuilder";
@@ -45,7 +45,7 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route path="/onboarding" element={<Onboarding />} />
           <Route path="/vendas" element={<PaginaVendas />} />
-          <Route element={<DashboardLayout />}> 
+          <Route element={<DashboardLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/membros" element={<Membros />} />
             <Route path="/planos" element={<div className="text-center py-12"><h1 className="text-2xl font-bold text-muted-foreground">Planos e Assinatura - Em breve</h1></div>} />

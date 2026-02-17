@@ -13,7 +13,9 @@ import { LayoutSelector } from "@/components/events/LayoutSelector";
 import { CellWithDetails, CellStatus, LayoutType } from "@/types/cell";
 import { Plus, Search, ArrowUpDown, UserPlus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+// import { useQuery, useQueryClient } from "@tanstack/react-query"; // Removed unused imports if possible, or kept if needed
+import { useQueryClient } from "@tanstack/react-query";
+import { useCells } from "@/hooks/useCells";
 import { useChurchId } from "@/hooks/useChurchId";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -28,42 +30,22 @@ export default function Celulas() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: churchId, isLoading: churchLoading } = useChurchId();
-  const cellsQuery = useQuery<CellWithDetails[]>({
-    queryKey: ["cells", churchId],
-    enabled: !!churchId,
-    queryFn: async ({ signal }) => {
-      const { data: cellsData, error } = await supabase
-        .from("cells")
-        .select(`
-          *,
-          leader:members!cells_leader_id_fkey(
-            id,
-            full_name,
-            phone,
-            photo_url
-          )
-        `)
-        .eq("church_id", churchId as string)
-        .order("name")
-        .abortSignal(signal as AbortSignal);
-      if (error) throw error;
-      const cellsWithCount = await Promise.all(
-        (cellsData || []).map(async (cell) => {
-          const { count } = await supabase
-            .from("members")
-            .select("id", { count: "exact", head: true })
-            .eq("cell_id", cell.id)
-            .abortSignal(signal as AbortSignal);
-          return {
-            ...cell,
-            status: cell.status as CellStatus,
-            member_count: count || 0,
-          } as CellWithDetails;
-        })
-      );
-      return cellsWithCount as CellWithDetails[];
-    },
-  });
+
+  const {
+    cells,
+    loading: cellsLoading,
+    deleteCell,
+    addMemberToCell,
+    removeMemberFromCell,
+    getCellMembers,
+    refreshCells
+  } = useCells();
+
+  // Compatibility mapping
+  const cellsQuery = {
+    data: cells,
+    isLoading: cellsLoading
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | CellStatus>("all");
   const [selectedLayout, setSelectedLayout] = useState<LayoutType>(() => {
@@ -86,7 +68,7 @@ export default function Celulas() {
   const [eligibleLoading, setEligibleLoading] = useState(false);
   const membersControllerRef = useRef<AbortController | null>(null);
   const eligibleControllerRef = useRef<AbortController | null>(null);
-  
+
 
   const handleAddCell = () => {
     setCellToEdit(null);
@@ -106,25 +88,8 @@ export default function Celulas() {
   const handleConfirmDelete = async () => {
     if (!cellToDelete) return;
 
-    try {
-      await supabase
-        .from("members")
-        .update({ cell_id: null })
-        .eq("cell_id", cellToDelete.id);
-
-      const { error } = await supabase
-        .from("cells")
-        .delete()
-        .eq("id", cellToDelete.id);
-
-      if (error) throw error;
-
-      toast.success("Célula excluída com sucesso");
-      queryClient.invalidateQueries({ queryKey: ["cells", churchId] });
-    } catch (error) {
-      console.error("Erro ao excluir célula:", error);
-      toast.error("Erro ao excluir célula");
-    } finally {
+    const success = await deleteCell(cellToDelete.id);
+    if (success) {
       setShowDeleteModal(false);
       setCellToDelete(null);
     }
@@ -136,7 +101,7 @@ export default function Celulas() {
   };
 
   const handleModalSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: ["cells", churchId] });
+    refreshCells();
     setCellToEdit(null);
   };
 
@@ -170,24 +135,15 @@ export default function Celulas() {
     setAddingMember(false);
     setMembersLoading(true);
     setCellMembers([]);
-    if (membersControllerRef.current) membersControllerRef.current.abort();
-    membersControllerRef.current = new AbortController();
-    try {
-      const { data, error } = await supabase
-        .from("members")
-        .select("id, full_name, email, phone, status, baptized, photo_url")
-        .eq("cell_id", cell.id)
-        .order("full_name")
-        .abortSignal(membersControllerRef.current.signal);
-      if (error) throw error;
-      setCellMembers((data || []) as Member[]);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      console.error("Erro ao carregar membros da célula:", error);
-      toast.error("Erro ao carregar membros da célula");
-    } finally {
-      setMembersLoading(false);
-    }
+
+    // We utilize proper abort signal handling inside useCells via supabase client config if we wanted, 
+    // but here we just call the helper. 
+    // For cleaner refactor, we can rely on the hook's helper.
+    // If strict abort controller is needed, we might keep it or move it to hook.
+    // For now, simpler implementation:
+    const members = await getCellMembers(cell.id);
+    setCellMembers(members);
+    setMembersLoading(false);
   };
 
   const loadEligibleMembers = async () => {
@@ -220,40 +176,24 @@ export default function Celulas() {
 
   const handleAssignMember = async (memberId: string) => {
     if (!cellForMembers) return;
-    try {
-      const { error } = await supabase
-        .from("members")
-        .update({ cell_id: cellForMembers.id })
-        .eq("id", memberId);
-      if (error) throw error;
+
+    const success = await addMemberToCell(cellForMembers.id, memberId);
+    if (success) {
       const added = eligibleMembers.find((m) => m.id === memberId);
       const nextMembers = added ? [...cellMembers, added] : cellMembers;
       setCellMembers(nextMembers);
       setEligibleMembers(eligibleMembers.filter((m) => m.id !== memberId));
-      toast.success("Membro adicionado à célula");
-      queryClient.invalidateQueries({ queryKey: ["cells", churchId] });
-    } catch (err) {
-      console.error("Erro ao vincular membro:", err);
-      toast.error("Erro ao vincular membro");
     }
   };
 
   const handleRemoveMemberFromCell = async (memberId: string) => {
     if (!cellForMembers) return;
-    try {
-      const { error } = await supabase
-        .from("members")
-        .update({ cell_id: null })
-        .eq("id", memberId);
-      if (error) throw error;
+
+    const success = await removeMemberFromCell(memberId);
+    if (success) {
       const removed = cellMembers.find((m) => m.id === memberId);
       setCellMembers(cellMembers.filter((m) => m.id !== memberId));
       if (removed) setEligibleMembers([...eligibleMembers, removed]);
-      toast.success("Membro removido da célula");
-      queryClient.invalidateQueries({ queryKey: ["cells", churchId] });
-    } catch (err) {
-      console.error("Erro ao remover membro:", err);
-      toast.error("Erro ao remover membro");
     }
   };
 
@@ -522,7 +462,7 @@ export default function Celulas() {
         onSuccess={async () => {
           setShowAddMemberModal(false);
           if (cellForMembers) await handleViewMembers(cellForMembers);
-          queryClient.invalidateQueries({ queryKey: ["cells", churchId] });
+          refreshCells();
         }}
         prefillCellId={cellForMembers?.id}
       />

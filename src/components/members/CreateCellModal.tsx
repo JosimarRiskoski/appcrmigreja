@@ -1,8 +1,5 @@
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
-import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
   DialogContent,
@@ -30,21 +27,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
-const cellSchema = z.object({
-  name: z.string().min(3, "Nome deve ter pelo menos 3 caracteres"),
-  description: z.string().optional(),
-  meeting_day: z.string().optional(),
-  meeting_time: z.string().optional(),
-  meeting_location: z.string().optional(),
-});
-
-type CellFormData = z.infer<typeof cellSchema>;
+import { cellSchema, CellFormData } from "@/schemas/cellSchema";
+import { useCells } from "@/hooks/useCells";
+import { useEffect } from "react";
+import { CellWithDetails } from "@/types/cell";
 
 interface CreateCellModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  cellToEdit?: CellWithDetails | null;
 }
 
 const DAYS_OF_WEEK = [
@@ -61,8 +53,9 @@ export function CreateCellModal({
   open,
   onOpenChange,
   onSuccess,
+  cellToEdit
 }: CreateCellModalProps) {
-  const [loading, setLoading] = useState(false);
+  const { createCell, updateCell, loading } = useCells();
 
   const form = useForm<CellFormData>({
     resolver: zodResolver(cellSchema),
@@ -76,41 +69,39 @@ export function CreateCellModal({
     },
   });
 
-  const onSubmit = async (data: CellFormData) => {
-    setLoading(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Usuário não autenticado');
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('church_id')
-        .eq('id', user.id)
-        .single();
-
-      if (!profile?.church_id) throw new Error('Igreja não encontrada');
-
-      const { error } = await supabase.from('cells').insert({
-        church_id: profile.church_id,
-        name: data.name,
-        description: data.description || null,
-        meeting_day: data.meeting_day || null,
-        meeting_time: data.meeting_time || null,
-        meeting_location: data.meeting_location || null,
-        status: 'ativa',
+  useEffect(() => {
+    if (cellToEdit) {
+      form.reset({
+        name: cellToEdit.name,
+        description: cellToEdit.description || "",
+        meeting_day: cellToEdit.meeting_day || "",
+        meeting_time: cellToEdit.meeting_time || "",
+        meeting_location: cellToEdit.meeting_location || "",
       });
+    } else {
+      form.reset({
+        name: "",
+        description: "",
+        meeting_day: "",
+        meeting_time: "",
+        meeting_location: "",
+      });
+    }
+  }, [cellToEdit, form, open]);
 
-      if (error) throw error;
+  const onSubmit = async (data: CellFormData) => {
+    let success = false;
 
+    if (cellToEdit) {
+      success = await updateCell(cellToEdit.id, data);
+    } else {
+      success = await createCell(data);
+    }
+
+    if (success) {
       form.reset();
       onSuccess();
       onOpenChange(false);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro ao criar célula';
-      console.error('Erro ao criar célula:', error);
-      toast.error(message);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -118,9 +109,9 @@ export function CreateCellModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Nova Célula</DialogTitle>
+          <DialogTitle>{cellToEdit ? "Editar Célula" : "Nova Célula"}</DialogTitle>
           <DialogDescription>
-            Crie uma nova célula para organizar seus membros
+            {cellToEdit ? "Edite as informações da célula" : "Crie uma nova célula para organizar seus membros"}
           </DialogDescription>
         </DialogHeader>
 
@@ -194,10 +185,10 @@ export function CreateCellModal({
                   <FormItem>
                     <FormLabel>Horário</FormLabel>
                     <FormControl>
-                      <Input 
-                        type="time" 
-                        placeholder="19:30" 
-                        {...field} 
+                      <Input
+                        type="time"
+                        placeholder="19:30"
+                        {...field}
                       />
                     </FormControl>
                     <FormMessage />
@@ -230,7 +221,7 @@ export function CreateCellModal({
                 Cancelar
               </Button>
               <Button type="submit" disabled={loading || !form.formState.isValid}>
-                {loading ? 'Criando...' : 'Criar Célula'}
+                {loading ? (cellToEdit ? 'Salvando...' : 'Criando...') : (cellToEdit ? 'Salvar Alterações' : 'Criar Célula')}
               </Button>
             </DialogFooter>
           </form>

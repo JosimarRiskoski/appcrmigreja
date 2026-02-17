@@ -42,10 +42,13 @@ const Onboarding = () => {
 
       if (churchError) throw churchError;
 
-      // Update profile with church_id
+      // Update profile with church_id and owner status
       const { error: profileError } = await supabase
         .from("profiles")
-        .update({ church_id: church.id })
+        .update({
+          church_id: church.id,
+          is_church_owner: true
+        })
         .eq("id", user.user.id);
 
       if (profileError) throw profileError;
